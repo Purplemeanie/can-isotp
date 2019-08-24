@@ -515,7 +515,7 @@ static int isotp_rcv_ff(struct sock *sk, struct canfd_frame *cf, int ae)
 	so->rx.state = ISOTP_WAIT_DATA;
 
 	/* no creation of flow control frames */
-	if (so->opt.flags & CAN_ISOTP_LISTEN_MODE)
+	if (so->opt.flags & CAN_ISOTP_LISTEN_MODE  || so->opt.flags & CAN_ISOTP_NOFLOW_MODE)
 		return 0;
 
 	/* send our first FC frame */
@@ -595,7 +595,7 @@ static int isotp_rcv_cf(struct sock *sk, struct canfd_frame *cf, int ae,
 	}
 
 	/* no creation of flow control frames */
-	if (so->opt.flags & CAN_ISOTP_LISTEN_MODE)
+	if (so->opt.flags & CAN_ISOTP_LISTEN_MODE || so->opt.flags & CAN_ISOTP_NOFLOW_MODE)
 		return 0;
 
 	/* perform blocksize handling, if enabled */
@@ -965,9 +965,21 @@ static int isotp_sendmsg(struct kiocb *iocb, struct socket *sock,
 
 		isotp_create_fframe(cf, so, ae);
 
-		DBG("starting txtimer for fc\n");
-		/* start timeout for FC */
-		hrtimer_start(&so->txtimer, ktime_set(1,0), HRTIMER_MODE_REL);
+		/* if we have noflow set then just railroad through the timer */
+		if( so->opt.flags & CAN_ISOTP_NOFLOW_MODE)
+		{
+			so->tx.bs = 0;
+			so->tx.state = ISOTP_SENDING;
+			DBG("starting txtimer for sending with no flow control\n");
+			/* start cyclic timer for sending CF frame */
+			hrtimer_start(&so->txtimer, so->tx_gap,
+				      HRTIMER_MODE_REL);
+		} else {
+			DBG("starting txtimer for fc\n");
+			/* start timeout for FC */
+			hrtimer_start(&so->txtimer, ktime_set(1,0), HRTIMER_MODE_REL);
+		}
+
 	}
 
 	/* send the first or only CAN frame */
