@@ -757,7 +757,10 @@ static void isotp_create_fframe(struct canfd_frame *cf, struct isotp_sock *so,
 		cf->data[i] = so->tx.buf[so->tx.idx++];
 
 	so->tx.sn = 1;
-	so->tx.state = ISOTP_WAIT_FIRST_FC;
+	if( so->opt.flags & CAN_ISOTP_NOFLOW_MODE)
+		so->tx.state = ISOTP_SENDING;
+	else
+	  so->tx.state = ISOTP_WAIT_FIRST_FC;
 }
 
 static void isotp_tx_timer_tsklet(unsigned long data)
@@ -817,6 +820,13 @@ isotp_tx_burst:
 
 		skb->dev = dev;
 		isotp_skb_set_owner(skb, sk);
+		DBG("Sending packet %d BS %d, STmin 0x%02X, tx_gap %lld\n", so->tx.sn, so->txfc.bs, so->txfc.stmin,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0)
+	    (long long)so->tx_gap);
+#else
+	    (long long)so->tx_gap.tv64);
+#endif
+
 		can_send(skb, 1);
 
 		if (so->tx.idx >= so->tx.len) {
@@ -884,6 +894,7 @@ static int isotp_sendmsg(struct kiocb *iocb, struct socket *sock,
 	int ae = (so->opt.flags & CAN_ISOTP_EXTEND_ADDR)? 1:0;
 	int off;
 	int err;
+	int delay_timer_start = 0;
 
 	if (!so->bound)
 		return -EADDRNOTAVAIL;
@@ -965,15 +976,16 @@ static int isotp_sendmsg(struct kiocb *iocb, struct socket *sock,
 
 		isotp_create_fframe(cf, so, ae);
 
-		/* if we have noflow set then just railroad through the timer */
+		/* if we have noflow set then set up the tx_gap since we'll not be getting any FC to do it */
 		if( so->opt.flags & CAN_ISOTP_NOFLOW_MODE)
 		{
-			so->tx.bs = 0;
-			so->tx.state = ISOTP_SENDING;
-			DBG("starting txtimer for sending with no flow control\n");
-			/* start cyclic timer for sending CF frame */
-			hrtimer_start(&so->txtimer, so->tx_gap,
-				      HRTIMER_MODE_REL);
+		  delay_timer_start = 1;
+		  so->tx_gap = ktime_set(0,0);
+		  /* add transmission time for CAN frame N_As */
+		  so->tx_gap = ktime_add_ns(so->tx_gap, so->opt.frame_txtime);
+		  /* add waiting time for consecutive frames N_Cs */
+		  if (so->opt.flags & CAN_ISOTP_FORCE_TXSTMIN)
+			  so->tx_gap = ktime_add_ns(so->tx_gap, so->force_tx_stmin);
 		} else {
 			DBG("starting txtimer for fc\n");
 			/* start timeout for FC */
@@ -988,8 +1000,22 @@ static int isotp_sendmsg(struct kiocb *iocb, struct socket *sock,
 
 	skb->dev = dev;
 	skb->sk  = sk;
-	err = can_send(skb, 1);
+	DBG("Sending packet %d BS %d, STmin 0x%02X, tx_gap %lld\n", so->tx.sn, so->txfc.bs, so->txfc.stmin,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0)
+	    (long long)so->tx_gap);
+#else
+	    (long long)so->tx_gap.tv64);
+#endif
+  err = can_send(skb, 1);
 	dev_put(dev);
+	/* Delay timer start to here when doing noflow and multiple frames */
+	if (delay_timer_start)
+	{
+		DBG("starting txtimer for sending with no flow control\n");
+		/* start cyclic timer for sending CF frame */
+		hrtimer_start(&so->txtimer, so->tx_gap,
+			     HRTIMER_MODE_REL);
+	}
 	if (err)
 		return err;
 
@@ -1432,7 +1458,7 @@ static int isotp_notifier(struct notifier_block *nb,
 	return NOTIFY_DONE;
 }
 
-static int isotp_init(struct sock *sk)
+static int isotp_init(struct sock *sk) 
 {
 	struct isotp_sock *so = isotp_sk(sk);
 
