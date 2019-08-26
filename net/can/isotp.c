@@ -820,7 +820,6 @@ isotp_tx_burst:
 
 		skb->dev = dev;
 		isotp_skb_set_owner(skb, sk);
-
 		can_send(skb, 1);
 
 		if (so->tx.idx >= so->tx.len) {
@@ -994,7 +993,7 @@ static int isotp_sendmsg(struct kiocb *iocb, struct socket *sock,
 
 	skb->dev = dev;
 	skb->sk  = sk;
-  err = can_send(skb, 1);
+	err = can_send(skb, 1);
 	dev_put(dev);
 	/* Delay timer start to here when doing noflow and multiple frames */
 	if (delay_timer_start)
