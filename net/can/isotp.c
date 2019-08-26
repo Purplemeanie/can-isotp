@@ -820,12 +820,6 @@ isotp_tx_burst:
 
 		skb->dev = dev;
 		isotp_skb_set_owner(skb, sk);
-		DBG("Sending packet %d BS %d, STmin 0x%02X, tx_gap %lld\n", so->tx.sn, so->txfc.bs, so->txfc.stmin,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0)
-	    (long long)so->tx_gap);
-#else
-	    (long long)so->tx_gap.tv64);
-#endif
 
 		can_send(skb, 1);
 
@@ -1000,12 +994,6 @@ static int isotp_sendmsg(struct kiocb *iocb, struct socket *sock,
 
 	skb->dev = dev;
 	skb->sk  = sk;
-	DBG("Sending packet %d BS %d, STmin 0x%02X, tx_gap %lld\n", so->tx.sn, so->txfc.bs, so->txfc.stmin,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0)
-	    (long long)so->tx_gap);
-#else
-	    (long long)so->tx_gap.tv64);
-#endif
   err = can_send(skb, 1);
 	dev_put(dev);
 	/* Delay timer start to here when doing noflow and multiple frames */
@@ -1458,7 +1446,7 @@ static int isotp_notifier(struct notifier_block *nb,
 	return NOTIFY_DONE;
 }
 
-static int isotp_init(struct sock *sk) 
+static int isotp_init(struct sock *sk)
 {
 	struct isotp_sock *so = isotp_sk(sk);
 
